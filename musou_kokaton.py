@@ -13,9 +13,9 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 def check_bound(obj_rct: pg.Rect) -> tuple[bool, bool]:
     """
-    オブジェクトが画面内or画面外を判定し，真理値タプルを返す関数
-    引数：こうかとんや爆弾，ビームなどのRect
-    戻り値：横方向，縦方向のはみ出し判定結果（画面内：True／画面外：False）
+    オブジェクトが画面内or画面外を判定し,真理値タプルを返す関数
+    引数：こうかとんや爆弾,ビームなどのRect
+    戻り値：横方向,縦方向のはみ出し判定結果（画面内：True/画面外：False）
     """
     yoko, tate = True, True
     if obj_rct.left < 0 or WIDTH < obj_rct.right:
@@ -27,7 +27,7 @@ def check_bound(obj_rct: pg.Rect) -> tuple[bool, bool]:
 
 def calc_orientation(org: pg.Rect, dst: pg.Rect) -> tuple[float, float]:
     """
-    orgから見て，dstがどこにあるかを計算し，方向ベクトルをタプルで返す
+    orgから見て, dstがどこにあるかを計算し，方向ベクトルをタプルで返す
     引数1 org：爆弾SurfaceのRect
     引数2 dst：こうかとんSurfaceのRect
     戻り値：orgから見たdstの方向ベクトルを表すタプル
@@ -67,11 +67,12 @@ class Bird(pg.sprite.Sprite):
             (0, +1): pg.transform.rotozoom(img, -90, 0.9),  # 下
             (+1, +1): pg.transform.rotozoom(img, -45, 0.9),  # 右下
         }
-        self.dire = (+1, 0)
+        self.dire = (+1, 0) # 元のコードの通り c なしで統一
         self.image = self.imgs[self.dire]
         self.rect = self.image.get_rect()
         self.rect.center = xy
         self.speed = 10
+        self.invincible_time = 0 # 追加：被弾後の無敵タイマー
 
     def change_img(self, num: int, screen: pg.Surface):
         """
@@ -88,6 +89,9 @@ class Bird(pg.sprite.Sprite):
         引数1 key_lst：押下キーの真理値リスト
         引数2 screen：画面Surface
         """
+        if self.invincible_time > 0:
+            self.invincible_time -= 1 # 追加：無敵時間を減らす
+
         sum_mv = [0, 0]
         for k, mv in __class__.delta.items():
             if key_lst[k]:
@@ -147,7 +151,7 @@ class Beam(pg.sprite.Sprite):
         引数 bird：ビームを放つこうかとん
         """
         super().__init__()
-        self.vx, self.vy = bird.dire
+        self.vx, self.vy = bird.dire # 元のコードの変数名（dire）に合わせました
         angle = math.degrees(math.atan2(-self.vy, self.vx))
         self.image = pg.transform.rotozoom(pg.image.load(f"fig/beam.png"), angle, 1.0)
         self.vx = math.cos(math.radians(angle))
@@ -242,17 +246,48 @@ class Score:
         screen.blit(self.image, self.rect)
 
 
+# 追加：無敵時のオーラを管理するクラス
+class NeoBirdEffect(pg.sprite.Sprite):
+    def __init__(self, bird: Bird):
+        super().__init__()
+        self.bird = bird
+        self.image = pg.Surface((100, 100), pg.SRCALPHA)
+        pg.draw.circle(self.image, (255, 255, 0, 128), (50, 50), 45) # 黄色の半透明オーラ
+        self.rect = self.image.get_rect()
+        self.rect.center = self.bird.rect.center
+
+    def update(self):
+        self.rect.center = self.bird.rect.center
+
+
+# 追加：残機数を表示するクラス
+class Life:
+    def __init__(self):
+        self.font = pg.font.SysFont("hgp創英角ﾎﾟｯﾌﾟ体", 30)
+        self.color = (0, 0, 255)
+        self.life = 3
+        self.image = self.font.render(f"Life: {self.life}", 0, self.color)
+        self.rect = self.image.get_rect()
+        self.rect.center = (100, 50)
+
+    def update(self, screen: pg.Surface):
+        self.image = self.font.render(f"Life: {self.life}", 0, self.color)
+        screen.blit(self.image, self.rect)
+
+
 def main():
     pg.display.set_caption("真！こうかとん無双")
     screen = pg.display.set_mode((WIDTH, HEIGHT))
     bg_img = pg.image.load(f"fig/pg_bg.jpg")
     score = Score()
+    life = Life() # 追加：ライフのインスタンス
 
     bird = Bird(3, (900, 400))
     bombs = pg.sprite.Group()
     beams = pg.sprite.Group()
     exps = pg.sprite.Group()
     emys = pg.sprite.Group()
+    effects = pg.sprite.Group() # 追加：オーラのグループ箱
 
     tmr = 0
     clock = pg.time.Clock()
@@ -263,6 +298,9 @@ def main():
                 return 0
             if event.type == pg.KEYDOWN and event.key == pg.K_SPACE:
                 beams.add(Beam(bird))
+            if event.type == pg.KEYDOWN and event.key == pg.K_RSHIFT: # 追加：右シフトでオーラ発動
+                effects.add(NeoBirdEffect(bird))
+
         screen.blit(bg_img, [0, 0])
 
         if tmr%200 == 0:  # 200フレームに1回，敵機を出現させる
@@ -282,12 +320,13 @@ def main():
             exps.add(Explosion(bomb, 50))  # 爆発エフェクト
             score.value += 1  # 1点アップ
 
-        for bomb in pg.sprite.spritecollide(bird, bombs, True):  # こうかとんと衝突した爆弾リスト
-            bird.change_img(8, screen)  # こうかとん悲しみエフェクト
-            score.update(screen)
-            pg.display.update()
-            time.sleep(2)
-            return
+        # 修正：爆弾との当たり判定（無敵オーラ中は効かない、被弾時は1ずつライフ減少＋無敵時間付与）
+        for bomb in pg.sprite.spritecollide(bird, bombs, True):
+            if len(effects) == 0:  # オーラ（無敵状態）が出ていないときだけダメージ
+                if bird.invincible_time == 0:
+                    bird.change_img(8, screen)  # こうかとん悲しみエフェクト
+                    life.life -= 1
+                    bird.invincible_time = 50  # 50フレーム(約1秒)の被弾無敵
 
         bird.update(key_lst, screen)
         beams.update()
@@ -298,7 +337,17 @@ def main():
         bombs.draw(screen)
         exps.update()
         exps.draw(screen)
+        effects.update() # 追加：オーラの更新
+        effects.draw(screen) # 追加：オーラの描画
         score.update(screen)
+        life.update(screen) # 追加：ライフの描画
+
+        # 追加：残機が0以下になったら2秒待って終了
+        if life.life <= 0:
+            pg.display.update()
+            time.sleep(2)
+            return
+
         pg.display.update()
         tmr += 1
         clock.tick(50)
@@ -309,3 +358,4 @@ if __name__ == "__main__":
     main()
     pg.quit()
     sys.exit()
+    
